@@ -1,0 +1,59 @@
+#!/usr/bin/env php
+<?php
+// This script must be executed by Telegraf and connected to Asterisk to returns some valuable information.
+
+// Telegram host field to send to InfluxDB.
+$telegrafsystem="asterisksystem";
+
+// Manager configuration
+$host="localhost";
+$port="5038";
+$user="manageruser";
+$pass="managerpass";
+
+try{
+    $salida=array();
+    $socket = fsockopen($host,$port, $errno, $errstr, 10);
+    fputs($socket, "Action: Login\r\nUserName: $user\r\nSecret: $pass\r\nEvents: off\r\n\r\n");
+    $test=""; while ($test != "\r\n"){ $test=fgets($socket,4096); $salida[]=$test; }
+
+    // Obtenemos el número de llamadas simultaneas
+	fputs($socket, "Action: Command\r\n");
+	fputs($socket, "Command: core show channels\r\n\r\n");
+	$test=""; while ($test != "\r\n"){ $test=fgets($socket,4096); $salida[]=$test;}
+	for ($t=0; $t<count($salida); $t++){
+	    if (stripos($salida[$t],"active call") !== false){
+		list($llamadas)=explode(" ",$salida[$t]);
+	    }
+	}
+
+    echo "llamadas,host=$telegrafsystem value=$llamadas\n";
+
+
+
+    // Obtenemos el número de usuarios SIP registrados
+	unset($salida); $salida=array();
+	fputs($socket, "Action: Command\r\n");
+	fputs($socket, "Command: sip show peers\r\n\r\n");
+	$test=""; while ($test != "\r\n"){ $test=fgets($socket,4096); $salida[]=trim($test);}
+	for ($t=0; $t<count($salida); $t++){
+	    // 108 sip peers [Monitored: 34 online, 45 offline Unmonitored: 24 online, 5 offline]
+	    if (stripos($salida[$t],"Monitored:") !== false){
+		list($ntotal,$nonmon,$moffmon,$nonun,$noffun)=sscanf($salida[$t],"%d sip peers [Monitored: %d online, %d offline Unmonitored: %d online, %d offline]");
+	    }
+	}
+	$totalSIPon=$nonmon+$nonun;
+	$totalSIPoff=$moffmon+$noffun;
+	if (($totalSIPon > 0) && ($totalSIPoff > 0)){
+	    $totalSIPTPC=round(($totalSIPon*100)/($totalSIPon+$totalSIPoff));
+	}else{
+	    $totalSIPTPC=0;
+	}
+
+    echo "registeredSIP,host=$telegrafsystem value=$totalSIPon\n";
+    echo "unregisteredSIP,host=$telegrafsystem value=$totalSIPoff\n";
+    echo "registeredSIP_percent,host=$telegrafsystem value=$totalSIPTPC\n";
+
+}catch(Exception $e){
+    echo "";
+}
